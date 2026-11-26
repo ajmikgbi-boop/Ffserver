@@ -22,6 +22,7 @@ const { ConfigStore } = require('./config-store');
 const { SyncSession } = require('./session');
 const { normalizeServerUrl } = require('./cloud-client');
 const { createLogger } = require('./logger');
+const { S, translateError, PLATFORM_NAMES, SERVER_ERRORS } = require('./i18n');
 
 const APP_ID = 'com.companysync.desktop';
 const APP_NAME = 'CompanySync';
@@ -29,6 +30,9 @@ const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const SERVER_CODE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/;
 const isDev = process.argv.includes('--dev');
 const startHidden = process.argv.includes('--hidden');
+
+// The whole UI is Arabic: make Chromium (Intl defaults, navigator.language) agree.
+app.commandLine.appendSwitch('lang', 'ar');
 
 let config = null;
 let log = console;
@@ -39,6 +43,7 @@ let session = null;
 let sessionParams = null; // credentials of the running session (also when "remember" is off)
 let isQuitting = false;
 let quitCleanupDone = false;
+const pendingConfirms = new Map(); // id -> resolve(boolean) for in-app confirmation dialogs
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,7 +61,7 @@ function cleanDeviceName(value) {
 }
 
 function defaultDeviceName() {
-  return cleanDeviceName(os.hostname().replace(/\.local$/i, '')) || 'My Computer';
+  return cleanDeviceName(os.hostname().replace(/\.local$/i, '')) || 'جهازي';
 }
 
 function send(channel, payload) {
@@ -80,6 +85,7 @@ function buildState() {
     view: session ? 'dashboard' : 'login',
     appVersion: app.getVersion(),
     platform: process.platform,
+    platformName: PLATFORM_NAMES[process.platform] || process.platform,
     canLaunchAtLogin: process.platform === 'win32' || process.platform === 'darwin',
     config: {
       serverUrl: (sessionParams && sessionParams.serverUrl) || c.serverUrl,
@@ -98,36 +104,34 @@ function buildState() {
 }
 
 function describeStatus() {
-  if (!session) return 'Not connected';
+  if (!session) return S.status.notConnected;
   const conn = session.client ? session.client.status : 'idle';
-  if (conn !== 'connected') return conn === 'error' ? 'Connection refused' : 'Reconnecting…';
+  if (conn !== 'connected') return conn === 'error' ? S.status.refused : S.status.reconnecting;
   const s = session.engine ? session.engine.getStatus() : null;
-  if (!s) return 'Starting…';
+  if (!s) return S.status.starting;
   switch (s.state) {
     case 'idle':
-      return 'Up to date';
+      return S.status.upToDate;
     case 'scanning':
-      return 'Checking for changes…';
+      return S.status.scanning;
     case 'syncing':
-      return `Syncing ${s.pending} item${s.pending === 1 ? '' : 's'}…`;
+      return S.status.syncing(s.pending);
     case 'error':
-      return `${s.errorCount} item${s.errorCount === 1 ? '' : 's'} could not sync`;
+      return S.status.failed(s.errorCount);
     case 'offline':
-      return 'Offline';
+      return S.status.offline;
     default:
-      return 'Starting…';
+      return S.status.starting;
   }
 }
 
 function friendlyNetworkError(err, serverUrl) {
   const code = (err && err.cause && err.cause.code) || (err && err.code) || '';
-  if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-    return `The server at ${serverUrl} did not respond. Free servers can take up to a minute to wake up — please try again.`;
-  }
-  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return `The address ${serverUrl} could not be found. Check the Server URL.`;
-  if (code === 'ECONNREFUSED') return `Nothing is listening at ${serverUrl}. Check the Server URL.`;
-  if (/CERT|SSL|TLS/i.test(code)) return `Secure connection to ${serverUrl} failed (${code}). Check the domain's SSL setup.`;
-  return `Could not reach ${serverUrl}: ${err && err.message ? err.message : 'unknown error'}`;
+  if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) return S.connect.timeout(serverUrl);
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return S.connect.notFound(serverUrl);
+  if (code === 'ECONNREFUSED') return S.connect.refused(serverUrl);
+  if (/CERT|SSL|TLS/i.test(code)) return S.connect.tls(serverUrl, code);
+  return S.connect.unreachable(serverUrl, translateError(err && err.cause ? err.cause : err));
 }
 
 async function checkHealth(serverUrl, timeoutMs = 75000) {
@@ -137,20 +141,38 @@ async function checkHealth(serverUrl, timeoutMs = 75000) {
   } catch (err) {
     throw new Error(friendlyNetworkError(err, serverUrl));
   }
-  if (!res.ok) throw new Error(`The server at ${serverUrl} answered with HTTP ${res.status}. Is this a CompanySync server?`);
+  if (!res.ok) throw new Error(S.connect.badStatus(serverUrl, res.status));
 }
 
-async function confirm(message, detail, confirmLabel = 'Continue', destructive = false) {
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: destructive ? 'warning' : 'question',
-    buttons: [confirmLabel, 'Cancel'],
-    defaultId: destructive ? 1 : 0,
-    cancelId: 1,
-    message,
-    detail,
-    noLink: true,
+/**
+ * Ask the user to confirm an action with the app's own right-to-left modal (native
+ * message boxes follow the OS layout direction, which is wrong on non-Arabic Windows).
+ * Falls back to a native dialog only when no window is available.
+ */
+async function confirm(message, detail, confirmLabel, destructive = false) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) {
+    const { response } = await dialog.showMessageBox({
+      type: destructive ? 'warning' : 'question',
+      buttons: [confirmLabel, S.dialogs.cancel],
+      defaultId: destructive ? 1 : 0,
+      cancelId: 1,
+      message,
+      detail,
+      noLink: true,
+    });
+    return response === 0;
+  }
+  showWindow();
+  const id = crypto.randomUUID();
+  return new Promise((resolve) => {
+    pendingConfirms.set(id, resolve);
+    send('confirm', { id, message, detail, confirmLabel, cancelLabel: S.dialogs.cancel, destructive });
   });
-  return response === 0;
+}
+
+function resolvePendingConfirms(value) {
+  for (const resolve of pendingConfirms.values()) resolve(value);
+  pendingConfirms.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -254,8 +276,8 @@ function createWindow(forceShow = false) {
     const c = config.get();
     if (!c.trayHintShown && Notification.isSupported()) {
       new Notification({
-        title: `${APP_NAME} is still syncing`,
-        body: 'The app keeps running in the system tray. Use the tray icon to open it or quit.',
+        title: S.tray.keepsRunningTitle,
+        body: S.tray.keepsRunningBody,
         silent: true,
       }).show();
       config.update({ trayHintShown: true });
@@ -269,6 +291,10 @@ function createWindow(forceShow = false) {
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url !== mainWindow.webContents.getURL()) event.preventDefault();
   });
+  // A reloaded or crashed renderer can no longer answer open confirmations.
+  mainWindow.webContents.on('did-start-loading', () => resolvePendingConfirms(false));
+  mainWindow.webContents.on('render-process-gone', () => resolvePendingConfirms(false));
+  mainWindow.on('closed', () => resolvePendingConfirms(false));
   if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
@@ -289,25 +315,25 @@ function updateTray(force = false) {
   trayLabel = label;
   const c = config.get();
   const template = [
-    { label: `Open ${APP_NAME}`, click: showWindow },
+    { label: S.tray.open, click: showWindow },
     { label, enabled: false },
     { type: 'separator' },
-    { label: 'Open Sync Folder', click: () => shell.openPath(currentFolder()) },
-    { label: 'Sync Now', enabled: Boolean(session), click: () => session && session.syncNow() },
+    { label: S.tray.openFolder, click: () => shell.openPath(currentFolder()) },
+    { label: S.tray.syncNow, enabled: Boolean(session), click: () => session && session.syncNow() },
     { type: 'separator' },
   ];
   if (process.platform === 'win32' || process.platform === 'darwin') {
     template.push({
-      label: 'Launch at Login',
+      label: S.tray.launchAtLogin,
       type: 'checkbox',
       checked: Boolean(c.launchAtLogin),
       click: (item) => setLaunchAtLogin(item.checked),
     });
     template.push({ type: 'separator' });
   }
-  template.push({ label: `Quit ${APP_NAME}`, click: quitApp });
+  template.push({ label: S.tray.quit, click: quitApp });
   tray.setContextMenu(Menu.buildFromTemplate(template));
-  tray.setToolTip(`${APP_NAME} — ${label}`);
+  tray.setToolTip(S.tray.tooltip(label));
 }
 
 function setApplicationMenu() {
@@ -316,15 +342,51 @@ function setApplicationMenu() {
     return;
   }
   // macOS needs an Edit menu for copy/paste shortcuts to work in text fields.
+  // Items are spelled out so every label is Arabic.
+  const m = S.macMenu;
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      { role: 'appMenu' },
-      { role: 'editMenu' },
       {
-        label: 'View',
-        submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'togglefullscreen' }],
+        label: APP_NAME,
+        submenu: [
+          { role: 'about', label: m.about },
+          { type: 'separator' },
+          { role: 'hide', label: m.hide },
+          { role: 'hideOthers', label: m.hideOthers },
+          { role: 'unhide', label: m.showAll },
+          { type: 'separator' },
+          { role: 'quit', label: m.quit },
+        ],
       },
-      { role: 'windowMenu' },
+      {
+        label: m.edit,
+        submenu: [
+          { role: 'undo', label: m.undo },
+          { role: 'redo', label: m.redo },
+          { type: 'separator' },
+          { role: 'cut', label: m.cut },
+          { role: 'copy', label: m.copy },
+          { role: 'paste', label: m.paste },
+          { role: 'selectAll', label: m.selectAll },
+        ],
+      },
+      {
+        label: m.view,
+        submenu: [
+          { role: 'reload', label: m.reload },
+          { role: 'toggleDevTools', label: m.devTools },
+          { type: 'separator' },
+          { role: 'togglefullscreen', label: m.fullscreen },
+        ],
+      },
+      {
+        label: m.window,
+        submenu: [
+          { role: 'minimize', label: m.minimize },
+          { role: 'zoom', label: m.zoom },
+          { role: 'close', label: m.close },
+        ],
+      },
     ]),
   );
 }
@@ -348,7 +410,7 @@ function quitApp() {
 // ---------------------------------------------------------------------------
 
 function requireSession() {
-  if (!session || !session.engine) throw new Error('Not connected to a server.');
+  if (!session || !session.engine) throw new Error(S.errors.notConnected);
   return session;
 }
 
@@ -359,29 +421,34 @@ function handle(channel, fn) {
       return { ok: true, ...(result || {}) };
     } catch (err) {
       log.warn(`[ipc] ${channel} failed: ${err.message}`);
-      return { ok: false, error: err.message || String(err) };
+      return { ok: false, error: translateError(err) };
     }
   });
 }
 
 function registerIpc() {
+  ipcMain.on('confirm:response', (_event, payload = {}) => {
+    const resolve = pendingConfirms.get(payload.id);
+    if (!resolve) return;
+    pendingConfirms.delete(payload.id);
+    resolve(Boolean(payload.ok));
+  });
+
   handle('app:get-state', async () => ({ state: buildState() }));
 
   handle('session:connect', async (input = {}) => {
     const serverUrl = normalizeServerUrl(input.serverUrl);
     const serverCode = String(input.serverCode || '').trim();
-    if (!SERVER_CODE_RE.test(serverCode)) {
-      throw new Error('Server Code must be 3-64 characters: letters, numbers, "-" or "_".');
-    }
+    if (!SERVER_CODE_RE.test(serverCode)) throw new Error(SERVER_ERRORS.INVALID_SERVER_CODE);
     const deviceName = cleanDeviceName(input.deviceName);
-    if (!deviceName) throw new Error('Enter a name for this device.');
+    if (!deviceName) throw new Error(S.connect.nameRequired);
     const syncFolder = path.resolve(String(input.syncFolder || config.get().syncFolder || defaultFolder()));
     const remember = Boolean(input.remember);
 
-    send('connect-progress', 'Contacting the server… (a sleeping free-tier server can take up to a minute to wake up)');
+    send('connect-progress', S.connect.contacting);
     await checkHealth(serverUrl);
 
-    send('connect-progress', 'Opening the sync channel…');
+    send('connect-progress', S.connect.opening);
     await stopSession();
     config.update({ deviceName, syncFolder, remember, autoConnect: remember, serverUrl, serverCode });
     await startSession({ serverUrl, serverCode });
@@ -393,16 +460,12 @@ function registerIpc() {
     }
     send('view', buildState());
     return {
-      warning: result.ok ? null : 'The server is reachable but the sync channel is still starting. The app keeps retrying automatically.',
+      warning: result.ok ? null : S.connect.stillStarting,
     };
   });
 
   handle('session:disconnect', async () => {
-    const ok = await confirm(
-      'Disconnect from this server?',
-      'Syncing stops until you connect again. Files already in your sync folder stay on this computer.',
-      'Disconnect',
-    );
+    const ok = await confirm(S.dialogs.disconnectTitle, S.dialogs.disconnectDetail, S.dialogs.disconnectConfirm);
     if (!ok) return { cancelled: true };
     await stopSession();
     config.update({ autoConnect: false });
@@ -417,7 +480,7 @@ function registerIpc() {
 
   handle('device:rename', async (name) => {
     const clean = cleanDeviceName(name);
-    if (!clean) throw new Error('Device name cannot be empty.');
+    if (!clean) throw new Error(S.errors.renameEmpty);
     config.update({ deviceName: clean });
     let offline = false;
     if (session) offline = (await session.renameDevice(clean)).offline;
@@ -427,9 +490,9 @@ function registerIpc() {
 
   handle('device:remove', async ({ deviceId, name } = {}) => {
     const ok = await confirm(
-      `Remove "${name || 'this device'}" from the device list?`,
-      'It reappears automatically if that computer connects again.',
-      'Remove',
+      S.dialogs.removeDeviceTitle(name),
+      S.dialogs.removeDeviceDetail,
+      S.dialogs.removeDeviceConfirm,
       true,
     );
     if (!ok) return { cancelled: true };
@@ -447,7 +510,7 @@ function registerIpc() {
 
   handle('folder:choose', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'Choose the folder to sync',
+      title: S.dialogs.chooseFolder,
       defaultPath: config.get().syncFolder || defaultFolder(),
       properties: ['openDirectory', 'createDirectory', 'promptToCreate'],
     });
@@ -457,20 +520,20 @@ function registerIpc() {
 
   handle('folder:change', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'Choose a new folder to sync',
+      title: S.dialogs.chooseNewFolder,
       defaultPath: currentFolder(),
       properties: ['openDirectory', 'createDirectory', 'promptToCreate'],
     });
     if (canceled || !filePaths.length) return { cancelled: true };
     const folder = path.resolve(filePaths[0]);
     if (folder === currentFolder()) return { folder };
-    if (folder === path.parse(folder).root) throw new Error('Choose a folder, not the root of a drive.');
-    if (folder.startsWith(app.getPath('userData'))) throw new Error('This folder is used internally by the app.');
+    if (folder === path.parse(folder).root) throw new Error(S.errors.driveRoot);
+    if (folder.startsWith(app.getPath('userData'))) throw new Error(S.errors.internalFolder);
     if (session) {
       const ok = await confirm(
-        `Sync "${folder}" instead?`,
-        'All workspace files will be downloaded into the new folder and files already in it will be uploaded. The old folder is left untouched.',
-        'Change Folder',
+        S.dialogs.changeFolderTitle(folder),
+        S.dialogs.changeFolderDetail,
+        S.dialogs.changeFolderConfirm,
       );
       if (!ok) return { cancelled: true };
     }
@@ -482,7 +545,7 @@ function registerIpc() {
 
   handle('file:open', async (rel) => {
     const s = requireSession();
-    if (!(await s.engine.isAvailableLocally(rel))) throw new Error('This file has not been downloaded to this computer yet.');
+    if (!(await s.engine.isAvailableLocally(rel))) throw new Error(S.errors.notDownloaded);
     const error = await shell.openPath(s.engine.localPath(rel));
     if (error) throw new Error(error);
     return {};
@@ -498,7 +561,7 @@ function registerIpc() {
   handle('file:save-as', async (rel) => {
     const s = requireSession();
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-      title: 'Save a copy',
+      title: S.dialogs.saveCopy,
       defaultPath: path.join(app.getPath('downloads'), path.posix.basename(rel)),
     });
     if (canceled || !filePath) return { cancelled: true };
@@ -511,9 +574,9 @@ function registerIpc() {
     const targets = isFolder ? s.engine.filesUnder(rel) : [rel];
     if (!targets.length) return { deleted: 0 };
     const ok = await confirm(
-      isFolder ? `Delete the folder "${rel}" and its ${targets.length} file(s)?` : `Delete "${path.posix.basename(rel)}"?`,
-      'It is removed from the cloud and from every connected device. Local copies are moved to the Recycle Bin / Trash.',
-      'Delete',
+      isFolder ? S.dialogs.deleteFolderTitle(rel, targets.length) : S.dialogs.deleteFileTitle(path.posix.basename(rel)),
+      S.dialogs.deleteDetail,
+      S.dialogs.deleteConfirm,
       true,
     );
     if (!ok) return { cancelled: true };
@@ -528,7 +591,7 @@ function registerIpc() {
   handle('files:import', async ({ paths, targetDir } = {}) => {
     const s = requireSession();
     const list = (Array.isArray(paths) ? paths : []).filter((p) => typeof p === 'string' && p);
-    if (!list.length) throw new Error('Nothing to upload.');
+    if (!list.length) throw new Error(S.errors.nothingToUpload);
     const count = await s.engine.importPaths(list, targetDir || '');
     return { count };
   });
@@ -536,7 +599,7 @@ function registerIpc() {
   handle('files:pick-and-import', async (targetDir) => {
     const s = requireSession();
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'Upload files',
+      title: S.dialogs.uploadFiles,
       properties: ['openFile', 'multiSelections'],
     });
     if (canceled || !filePaths.length) return { cancelled: true };
@@ -589,7 +652,7 @@ async function bootstrap() {
       .then(() => send('view', buildState()))
       .catch((err) => {
         log.error('Auto-connect failed', err);
-        send('notice', { level: 'error', message: `Could not start syncing: ${err.message}` });
+        send('notice', { level: 'error', message: S.errors.autoConnectFailed(translateError(err)) });
       });
   }
 
@@ -610,7 +673,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(bootstrap).catch((err) => {
     console.error(err);
-    dialog.showErrorBox(APP_NAME, `The app could not start:\n${err.stack || err.message}`);
+    dialog.showErrorBox(APP_NAME, S.dialogs.startupFailed(err.stack || err.message));
     app.exit(1);
   });
 

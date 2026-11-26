@@ -2,11 +2,12 @@
 
 const { EventEmitter } = require('node:events');
 const { io } = require('socket.io-client');
+const { S, SERVER_ERRORS } = require('./i18n');
 
 const FORWARDED_EVENTS = ['file:added', 'file:updated', 'file:deleted', 'devices:update', 'activity:new'];
 
 class OfflineError extends Error {
-  constructor(message = 'Not connected to the sync server') {
+  constructor(message = SERVER_ERRORS.OFFLINE) {
     super(message);
     this.name = 'OfflineError';
     this.code = 'OFFLINE';
@@ -15,9 +16,11 @@ class OfflineError extends Error {
 
 class RequestError extends Error {
   constructor({ code, message, file }) {
-    super(message || 'Request failed');
+    // Server messages are English; show the Arabic text for the error code instead.
+    super(SERVER_ERRORS[code] || SERVER_ERRORS.ERROR);
     this.name = 'RequestError';
     this.code = code || 'ERROR';
+    this.serverMessage = message || null;
     if (file !== undefined) this.file = file;
   }
 }
@@ -25,15 +28,15 @@ class RequestError extends Error {
 /** Accepts "sync.example.com", "https://sync.example.com/" etc. and returns a clean origin URL. */
 function normalizeServerUrl(input) {
   let value = String(input || '').trim();
-  if (!value) throw new Error('Enter the server URL.');
+  if (!value) throw new Error(S.connect.serverUrlRequired);
   if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
   let url;
   try {
     url = new URL(value);
   } catch {
-    throw new Error('The server URL is not valid.');
+    throw new Error(S.connect.serverUrlInvalid);
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('The server URL must start with https://');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(S.connect.serverUrlScheme);
   url.hash = '';
   url.search = '';
   return url.toString().replace(/\/+$/, '');
@@ -110,7 +113,7 @@ class CloudClient extends EventEmitter {
     socket.on('disconnect', (reason) => {
       this.ready = false;
       if (this.stopped) return;
-      this._setStatus('reconnecting', reason === 'io server disconnect' ? 'Disconnected by server' : null);
+      this._setStatus('reconnecting', reason === 'io server disconnect' ? S.connect.serverClosed : null);
       this.emit('disconnected', reason);
       // A server-initiated disconnect does not auto-reconnect in Socket.io; we always want to.
       if (reason === 'io server disconnect') this._scheduleManualReconnect();
@@ -120,7 +123,9 @@ class CloudClient extends EventEmitter {
       this.ready = false;
       if (this.stopped) return;
       const data = err && err.data ? err.data : {};
-      this.lastError = { message: err.message || 'Connection failed', code: data.code || null, permanent: !!data.permanent };
+      // Middleware errors carry a code (translated); transport errors ("xhr poll error"…) do not.
+      const message = (data.code && SERVER_ERRORS[data.code]) || S.connect.connectFailed;
+      this.lastError = { message, code: data.code || null, permanent: !!data.permanent, detail: err.message || null };
       this._setStatus(data.permanent ? 'error' : 'reconnecting', this.lastError.message);
       this.emit('connect-error', this.lastError);
       // Errors raised by server middleware stop Socket.io's automatic reconnection
@@ -191,12 +196,12 @@ class CloudClient extends EventEmitter {
       res = await this.socket.timeout(timeoutMs).emitWithAck(event, payload);
     } catch (err) {
       if (!this.connected) throw new OfflineError();
-      const timeout = new Error(`Server did not answer "${event}" in time`);
+      const timeout = new Error(SERVER_ERRORS.TIMEOUT);
       timeout.code = 'TIMEOUT';
       throw timeout;
     }
     if (!res || !res.ok) {
-      throw new RequestError(res && res.error ? res.error : { code: 'ERROR', message: 'Request failed' });
+      throw new RequestError(res && res.error ? res.error : { code: 'ERROR' });
     }
     return res;
   }

@@ -24,6 +24,7 @@ const {
   renameWithRetry,
 } = require('./fs-utils');
 const { uploadFile, downloadToFile, withRetry } = require('./transfer');
+const { S, translateError } = require('./i18n');
 
 /** How long a path stays in the active-sync lock set after the engine wrote it. */
 const LOCK_GRACE_MS = 4000;
@@ -151,7 +152,7 @@ class SyncEngine extends EventEmitter {
 
   async start() {
     const existing = await statOrNull(this.root);
-    if (existing && !existing.isDirectory()) throw new Error(`The sync folder path is a file: ${this.root}`);
+    if (existing && !existing.isDirectory()) throw new Error(S.sync.rootIsFile(this.root));
     await fsp.mkdir(this.root, { recursive: true });
     if (!existing && this.state.size > 0) {
       // The folder vanished (deleted, renamed or an unmounted drive). Treating that as
@@ -353,15 +354,13 @@ class SyncEngine extends EventEmitter {
         this.state.clear();
         this.emit('notice', {
           level: 'warn',
-          message:
-            'The cloud workspace is empty although this folder was synced before. To be safe nothing is deleted locally; your files will be uploaded again.',
+          message: S.sync.cloudEmpty,
         });
       } else if (this.state.size >= SAFETY_MIN_ENTRIES && local.size === 0 && this.remote.size > 0) {
         this.state.clear();
         this.emit('notice', {
           level: 'warn',
-          message:
-            'Your sync folder is empty although it was synced before. To be safe nothing is deleted from the cloud; files will be downloaded again.',
+          message: S.sync.folderEmpty,
         });
       }
 
@@ -375,7 +374,7 @@ class SyncEngine extends EventEmitter {
     } catch (err) {
       if (err.code !== 'OFFLINE' && !this.stopped) {
         this.log.warn('[sync] full sync failed', err);
-        this.emit('notice', { level: 'error', message: `Could not read the cloud file list: ${err.message}` });
+        this.emit('notice', { level: 'error', message: S.sync.listFailed(translateError(err)) });
         this.fullSyncRetryTimer = setTimeout(() => this.fullSync('retry'), 15000);
       }
     } finally {
@@ -467,14 +466,16 @@ class SyncEngine extends EventEmitter {
         return;
       }
       this.rescheduleCounts.delete(rel);
+      err = new Error(S.sync.gaveUp(err.message));
     }
     if (err.code === 'OFFLINE' || !this.client.connected) {
       // The next successful (re)connect runs a full sync that covers this path.
       return;
     }
-    this.errors.set(rel, { message: err.message, at: Date.now() });
+    const reason = translateError(err);
+    this.errors.set(rel, { message: reason, at: Date.now() });
     if (PERMANENT_ERROR_CODES.has(err.code)) {
-      this.emit('notice', { level: 'error', path: rel, message: `"${rel}" cannot be synced: ${err.message}` });
+      this.emit('notice', { level: 'error', path: rel, message: S.sync.cannotSync(rel, reason) });
       return;
     }
     const attempt = (this.failures.get(rel) || 0) + 1;
@@ -482,7 +483,7 @@ class SyncEngine extends EventEmitter {
     const delay = Math.min(MAX_RETRY_DELAY_MS, 2000 * 2 ** (attempt - 1));
     this.log.warn(`[sync] ${rel} failed (attempt ${attempt}, retry in ${Math.round(delay / 1000)}s): ${err.message}`);
     if (attempt === 1 || attempt % 5 === 0) {
-      this.emit('notice', { level: 'error', path: rel, message: `Could not sync "${rel}": ${err.message}` });
+      this.emit('notice', { level: 'error', path: rel, message: S.sync.couldNotSync(rel, reason) });
     }
     const timer = setTimeout(() => {
       this.retryTimers.delete(rel);
@@ -499,7 +500,7 @@ class SyncEngine extends EventEmitter {
     if (isIgnoredRel(rel)) return;
     const clash = this._caseClash(rel);
     if (clash) {
-      this._skip(rel, `"${rel}" only differs in letter case from "${clash}", which this computer cannot store side by side.`, task);
+      this._skip(rel, S.sync.caseClash(rel, clash), task);
       return;
     }
     const abs = toAbs(this.root, rel);
@@ -589,7 +590,7 @@ class SyncEngine extends EventEmitter {
         return info;
       }
     }
-    throw new RescheduleError('File is still being written', { forceHash: true, delayMs: 3000 });
+    throw new RescheduleError(S.sync.stillWriting, { forceHash: true, delayMs: 3000 });
   }
 
   _recordBase(rel, info) {
@@ -655,7 +656,7 @@ class SyncEngine extends EventEmitter {
     }
     if (res.status === 'conflict') {
       this._applyRemoteFile(rel, res.file);
-      throw new RescheduleError('The cloud version changed meanwhile');
+      throw new RescheduleError(S.sync.cloudChanged);
     }
 
     let file;
@@ -673,7 +674,7 @@ class SyncEngine extends EventEmitter {
         },
       });
       if (sent.sha256 !== local.sha256) {
-        throw new RescheduleError('File changed during upload', { forceHash: true, delayMs: 2000 });
+        throw new RescheduleError(S.sync.changedDuringUpload, { forceHash: true, delayMs: 2000 });
       }
       file = await this._commit('file:commit', { path: rel, sha256: local.sha256, size: local.size });
     }
@@ -712,13 +713,13 @@ class SyncEngine extends EventEmitter {
               }),
             { attempts: 4, signal: this.abort.signal },
           );
-          if (!result.etag) throw new Error(`Storage returned no ETag for part ${partNumber}`);
+          if (!result.etag) throw new Error(S.sync.noEtag(partNumber));
           parts.push({ partNumber, etag: result.etag });
         });
       }
       const st = await statOrNull(abs);
       if (!st || st.size !== local.size || st.mtimeMs !== local.mtimeMs) {
-        throw new RescheduleError('File changed during upload', { forceHash: true, delayMs: 2000 });
+        throw new RescheduleError(S.sync.changedDuringUpload, { forceHash: true, delayMs: 2000 });
       }
       return await this._commit('file:complete-multipart', {
         path: rel,
@@ -735,7 +736,7 @@ class SyncEngine extends EventEmitter {
 
   async _download(rel, abs, remote, localBefore, task) {
     if (!isPortablePath(rel, this.platform)) {
-      this._skip(rel, `"${rel}" contains characters that are not allowed in file names on this computer.`, task);
+      this._skip(rel, S.sync.notPortable(rel), task);
       return;
     }
     task.direction = 'download';
@@ -749,13 +750,13 @@ class SyncEngine extends EventEmitter {
     } catch (err) {
       if (err.code === 'NOT_FOUND') {
         this._applyRemoteDelete(rel);
-        throw new RescheduleError('The file was deleted from the cloud meanwhile');
+        throw new RescheduleError(S.sync.deletedMeanwhile);
       }
       throw err;
     }
     if (res.file.sha256 !== remote.sha256) {
       this._applyRemoteFile(rel, res.file);
-      throw new RescheduleError('The cloud version changed meanwhile');
+      throw new RescheduleError(S.sync.cloudChanged);
     }
 
     const tmp = path.join(this.tmpDir, `${crypto.randomUUID()}.download`);
@@ -777,7 +778,7 @@ class SyncEngine extends EventEmitter {
       const unchanged = localBefore
         ? now && now.isFile() && now.size === localBefore.size && now.mtimeMs === localBefore.mtimeMs
         : !now;
-      if (!unchanged) throw new RescheduleError('The local file changed during download', { forceHash: true });
+      if (!unchanged) throw new RescheduleError(S.sync.changedDuringDownload, { forceHash: true });
 
       this._lock(rel);
       await fsp.mkdir(path.dirname(abs), { recursive: true });
@@ -819,7 +820,7 @@ class SyncEngine extends EventEmitter {
     const res = await this.client.request('file:delete', { path: rel, expectedSha256: remote.sha256 });
     if (res.status === 'conflict') {
       this._applyRemoteFile(rel, res.file);
-      throw new RescheduleError('The cloud version changed meanwhile');
+      throw new RescheduleError(S.sync.cloudChanged);
     }
     this._applyRemoteDelete(rel);
     this.state.delete(rel);
@@ -846,7 +847,7 @@ class SyncEngine extends EventEmitter {
     this.emit('notice', {
       level: 'warn',
       path: rel,
-      message: `Conflict: "${rel}" was changed both here and on another device. Your version was saved as "${target}".`,
+      message: S.sync.conflict(rel, target),
     });
     this.schedule(target, { forceHash: true });
     await this._download(rel, abs, remote, null, task);
@@ -946,7 +947,7 @@ class SyncEngine extends EventEmitter {
     const res = await this.client.request('file:delete', { path: rel, expectedSha256: remote.sha256 });
     if (res.status === 'conflict') {
       this._applyRemoteFile(rel, res.file);
-      const err = new Error('The file was just changed by another device. Please check it and try again.');
+      const err = new Error(S.sync.changedByOther);
       err.code = 'CONFLICT';
       throw err;
     }

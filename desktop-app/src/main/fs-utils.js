@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { S } = require('./i18n');
 
 /** Folder inside the sync root used for in-progress downloads. Never synced. */
 const INTERNAL_DIR = '.companysync';
@@ -59,7 +60,7 @@ function toAbs(root, rel) {
   const abs = path.resolve(root, ...rel.split('/'));
   const back = path.relative(root, abs);
   if (!back || back.startsWith('..') || path.isAbsolute(back)) {
-    throw new Error(`Refusing to access a path outside the sync folder: ${rel}`);
+    throw new Error(S.sync.outsideRoot(rel));
   }
   return abs;
 }
@@ -128,7 +129,7 @@ async function walk(root, startRel = '') {
   return files;
 }
 
-/** "report.docx" -> "report (conflict from Office PC 2026-01-31 1405).docx" */
+/** "report.docx" -> "report (نسخة متعارضة من Office PC 2026-01-31 1405).docx" */
 function conflictRel(rel, deviceName, date = new Date()) {
   const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
   const base = rel.slice(dir.length);
@@ -137,8 +138,11 @@ function conflictRel(rel, deviceName, date = new Date()) {
   const ext = dot > 0 ? base.slice(dot) : '';
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}${pad(date.getMinutes())}`;
-  const safeDevice = String(deviceName || 'this device').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').trim() || 'this device';
-  return `${dir}${stem} (conflict from ${safeDevice} ${stamp})${ext}`;
+  const safeDevice =
+    String(deviceName || S.sync.thisDevice)
+      .replace(/[<>:"/\\|?*\u0000-\u001f\u2066-\u2069]/g, '')
+      .trim() || S.sync.thisDevice;
+  return `${dir}${S.sync.conflictCopyName(stem, safeDevice, stamp, ext)}`;
 }
 
 /** "a/b.txt" -> "a/b (2).txt" for n = 2 */

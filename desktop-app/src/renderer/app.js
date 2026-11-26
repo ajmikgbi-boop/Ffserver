@@ -1,16 +1,20 @@
 'use strict';
 
-/* CompanySync renderer. Talks to the main process only through window.companySync. */
+/* CompanySync renderer (Arabic, right-to-left). Talks to the main process only through window.companySync. */
 
 const api = window.companySync;
+const { T, formatBytes, formatRelative, formatDateTime } = window.L10N;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MAX_ROWS = 1000;
 const MAX_ACTIVITY = 250;
+// Icons that point in a reading direction and must be mirrored in right-to-left layout.
+const DIRECTIONAL_ICONS = new Set(['chevron']);
 
 const state = {
   view: null,
   appVersion: '',
   platform: '',
+  platformName: '',
   canLaunchAtLogin: false,
   config: {},
   session: null,
@@ -51,9 +55,43 @@ function h(tag, props, ...children) {
   return el;
 }
 
+/** Left-to-right isolated text (paths, URLs, codes, versions): slashes never flip. */
+function ltr(text, props = {}) {
+  return h('span', { ...props, dir: 'ltr', class: `ltr ${props.class || ''}`.trim() }, text);
+}
+
+/** User-provided text of unknown direction (device and file names), isolated from its surroundings. */
+function bdi(text, props = {}) {
+  return h('bdi', props, text);
+}
+
+/**
+ * A path (local folder or workspace file): a left-to-right run in which every segment is
+ * isolated with its own direction. Separators keep their order and Arabic names keep
+ * their extension attached ("تقارير/الميزانية 2027.xlsx").
+ */
+function pathRun(path, tag = 'span') {
+  const el = h(tag, { dir: 'ltr', class: 'ltr path-run' });
+  for (const part of String(path).split(/([\\/])/)) {
+    if (part === '/' || part === '\\') el.append(part);
+    else if (part) el.append(h('bdi', null, part));
+  }
+  return el;
+}
+
+/**
+ * A path that is truncated at its *start* ("…/Documents/CompanySync") when too long.
+ * The outer box is right-to-left (so the overflow happens on the left) and the path
+ * itself is an isolated left-to-right run, so its separators keep their order.
+ */
+function pathText(path, extraClass = '') {
+  return h('span', { class: `path-trunc ${extraClass}`.trim(), title: path }, pathRun(path));
+}
+
 function icon(name, extraClass = '') {
   const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('class', `i ${extraClass}`.trim());
+  const classes = ['i', extraClass, DIRECTIONAL_ICONS.has(name) ? 'flip-rtl' : ''].filter(Boolean).join(' ');
+  svg.setAttribute('class', classes);
   svg.setAttribute('aria-hidden', 'true');
   const use = document.createElementNS(SVG_NS, 'use');
   use.setAttribute('href', `#i-${name}`);
@@ -70,38 +108,8 @@ function iconButton(name, title, onClick, extraClass = '') {
 }
 
 // ---------------------------------------------------------------------------
-// Formatting
+// Small helpers
 // ---------------------------------------------------------------------------
-
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1024;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i++;
-  }
-  return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[i]}`;
-}
-
-function formatRelative(ts) {
-  if (!ts) return 'never';
-  const diff = Date.now() - ts;
-  if (diff < 45 * 1000) return 'just now';
-  const min = Math.round(diff / 60000);
-  if (min < 60) return `${min} min ago`;
-  const hours = Math.round(min / 60);
-  if (hours < 24) return `${hours} h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days} d ago`;
-  return new Date(ts).toLocaleDateString();
-}
-
-function formatDateTime(ts) {
-  return ts ? new Date(ts).toLocaleString() : '';
-}
 
 function baseName(rel) {
   const i = rel.lastIndexOf('/');
@@ -118,6 +126,13 @@ function extensionOf(name) {
   return dot > 0 ? name.slice(dot + 1, dot + 5) : '';
 }
 
+/** Device names as shown to the user (the server uses a few fixed English placeholders). */
+function deviceLabel(name, deviceId) {
+  if (!name || name === 'Unknown device') return T.devices.unknown;
+  if (name === 'Cloud storage' && !deviceId) return T.devices.cloudStorage;
+  return name;
+}
+
 // ---------------------------------------------------------------------------
 // Toasts
 // ---------------------------------------------------------------------------
@@ -127,12 +142,45 @@ function toast(message, level = 'info', timeout = 6000) {
     'div',
     { class: `toast ${level}`, role: level === 'error' ? 'alert' : 'status' },
     h('div', { class: 'toast-text', text: message }),
-    iconButton('x', 'Dismiss', () => el.remove()),
+    iconButton('x', T.dismiss, () => el.remove()),
   );
   $('toasts').append(el);
   const list = $('toasts');
   while (list.children.length > 4) list.firstElementChild.remove();
   if (timeout) setTimeout(() => el.remove(), timeout);
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation modal (requested by the main process)
+// ---------------------------------------------------------------------------
+
+const confirmQueue = [];
+let activeConfirm = null;
+
+function showNextConfirm() {
+  if (activeConfirm || !confirmQueue.length) return;
+  activeConfirm = confirmQueue.shift();
+  const c = activeConfirm;
+  $('modal-title').textContent = c.message || '';
+  $('modal-detail').textContent = c.detail || '';
+  $('modal-detail').hidden = !c.detail;
+  $('modal-confirm').textContent = c.confirmLabel || 'متابعة';
+  $('modal-confirm').className = `btn ${c.destructive ? 'btn-danger' : 'btn-primary'}`;
+  $('modal-cancel').textContent = c.cancelLabel || 'إلغاء';
+  const iconBox = $('modal-icon');
+  iconBox.dataset.tone = c.destructive ? 'danger' : 'info';
+  setIcon(iconBox, c.destructive ? 'alert' : 'power');
+  $('modal').hidden = false;
+  // Destructive actions default to "Cancel" so Enter never deletes by accident.
+  (c.destructive ? $('modal-cancel') : $('modal-confirm')).focus();
+}
+
+function closeConfirm(ok) {
+  if (!activeConfirm) return;
+  api.respondConfirm(activeConfirm.id, ok);
+  activeConfirm = null;
+  $('modal').hidden = true;
+  showNextConfirm();
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +191,7 @@ function applyState(s) {
   state.view = s.view;
   state.appVersion = s.appVersion;
   state.platform = s.platform;
+  state.platformName = s.platformName || s.platform;
   state.canLaunchAtLogin = s.canLaunchAtLogin;
   state.config = s.config || {};
   state.session = s.session;
@@ -192,14 +241,14 @@ function renderLogin() {
   fill('in-name', c.deviceName);
   $('in-remember').checked = c.remember !== false;
   const folder = state.loginFolder || c.syncFolder || c.defaultFolder || '';
-  $('in-folder').textContent = `\u200E${folder}\u200E`;
+  $('in-folder').replaceChildren(pathRun(folder));
   $('in-folder').title = folder;
 }
 
 function setConnecting(busy, text) {
   state.connecting = busy;
   $('btn-connect').disabled = busy;
-  $('btn-connect').textContent = busy ? 'Connecting…' : 'Connect';
+  $('btn-connect').textContent = busy ? T.connecting : T.connect;
   $('login-progress').hidden = !busy;
   if (text) $('login-progress-text').textContent = text;
   for (const id of ['in-url', 'in-code', 'in-name', 'in-remember', 'btn-pick-folder']) $(id).disabled = busy;
@@ -216,11 +265,11 @@ async function onConnect(event) {
   const serverUrl = $('in-url').value.trim();
   const serverCode = $('in-code').value.trim();
   const deviceName = $('in-name').value.trim();
-  if (!serverUrl) return showLoginError('Enter the Server URL, e.g. https://sync.yourcompany.com');
-  if (!serverCode) return showLoginError('Enter the Server Code for your workspace.');
-  if (!deviceName) return showLoginError('Give this device a name, e.g. "Main Office PC".');
+  if (!serverUrl) return showLoginError(T.urlRequired);
+  if (!serverCode) return showLoginError(T.codeRequired);
+  if (!deviceName) return showLoginError(T.nameRequired);
   showLoginError('');
-  setConnecting(true, 'Contacting the server…');
+  setConnecting(true, T.contactingServer);
   const res = await api.connect({
     serverUrl,
     serverCode,
@@ -263,86 +312,88 @@ function renderDashboard() {
 function renderTopbar() {
   const s = state.session || {};
   $('ws-code').textContent = s.serverCode || state.config.serverCode || '';
-  $('ws-chip').title = `Server Code · ${s.serverUrl || state.config.serverUrl || ''}`;
+  $('ws-chip').title = `${T.conn.chipTitle} · ${s.serverUrl || state.config.serverUrl || ''}`;
 
   const conn = state.connection || { status: 'idle' };
   const pill = $('conn-pill');
   pill.dataset.status = conn.status;
-  let text = 'Not connected';
   let host = '';
   try {
     host = new URL(conn.serverUrl || s.serverUrl).host;
   } catch {
     host = conn.serverUrl || '';
   }
-  if (conn.status === 'connected') text = `Connected · ${host}`;
-  else if (conn.status === 'connecting') text = `Connecting to ${host}…`;
-  else if (conn.status === 'reconnecting') text = conn.attempt > 1 ? `Reconnecting… (attempt ${conn.attempt})` : 'Reconnecting…';
-  else if (conn.status === 'error') text = 'Connection refused';
-  $('conn-text').textContent = text;
+  let content;
+  if (conn.status === 'connected') content = [T.conn.connected, ' · ', ltr(host)];
+  else if (conn.status === 'connecting') content = [`${T.conn.connectingTo} `, ltr(host), '…'];
+  else if (conn.status === 'reconnecting') content = [conn.attempt > 1 ? T.conn.reconnectingAttempt(conn.attempt) : T.conn.reconnecting];
+  else if (conn.status === 'error') content = [T.conn.refused];
+  else content = [T.conn.idle];
+  $('conn-text').replaceChildren(...content);
   pill.title = conn.error ? `${conn.serverUrl}\n${conn.error}` : conn.serverUrl || '';
 
   const theme = state.config.theme || 'system';
   setIcon($('btn-theme'), theme === 'light' ? 'sun' : theme === 'dark' ? 'moon' : 'contrast');
-  $('btn-theme').title = `Theme: ${theme} (click to change)`;
+  $('btn-theme').title = T.theme.title(T.theme.names[theme] || theme);
 }
 
 function renderDevice() {
   const name = state.config.deviceName || (state.session && state.session.deviceName) || '';
   $('device-name').textContent = name;
   $('device-name').title = name;
-  const platformName = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[state.platform] || state.platform;
-  $('device-meta').textContent = `${platformName} · CompanySync ${state.appVersion}`;
+  $('device-meta').replaceChildren(ltr(`${state.platformName} · CompanySync ${state.appVersion}`));
 }
 
 function renderSync() {
   const s = state.sync;
   const box = $('sync-status');
   const folder = (state.session && state.session.syncFolder) || state.config.syncFolder || '';
-  $('folder-path').textContent = `\u200E${folder}\u200E`;
+  $('folder-path').replaceChildren(pathRun(folder));
   $('folder-path').title = folder;
+  const iconBox = box.querySelector('.sync-status-icon');
   if (!s) {
     box.dataset.state = 'stopped';
-    setIcon(box.querySelector('.sync-status-icon'), 'clock');
-    $('sync-title').textContent = 'Starting…';
-    $('sync-sub').textContent = '';
+    setIcon(iconBox, 'clock');
+    $('sync-title').textContent = T.sync.starting;
+    $('sync-sub').replaceChildren();
     $('transfers').replaceChildren();
     return;
   }
-  const iconBox = box.querySelector('.sync-status-icon');
   box.dataset.state = s.state;
-  let title = 'Up to date';
-  let sub = s.lastSyncedAt ? `Last synced ${formatRelative(s.lastSyncedAt)}` : '';
+  let title = T.sync.upToDate;
+  let sub = s.lastSyncedAt ? [T.sync.lastSynced(formatRelative(s.lastSyncedAt))] : [];
   switch (s.state) {
     case 'idle':
       setIcon(iconBox, 'check-circle');
       break;
     case 'scanning':
       setIcon(iconBox, 'sync', 'spin');
-      title = 'Checking for changes…';
+      title = T.sync.scanning;
       break;
     case 'syncing':
       setIcon(iconBox, 'sync', 'spin');
-      title = `Syncing ${s.pending} item${s.pending === 1 ? '' : 's'}…`;
+      title = T.sync.syncing(s.pending);
       break;
     case 'offline':
       setIcon(iconBox, 'cloud-off');
-      title = 'Offline';
-      sub = 'Changes are synced automatically once the server is reachable.';
+      title = T.sync.offline;
+      sub = [T.sync.offlineSub];
       break;
-    case 'error':
+    case 'error': {
       setIcon(iconBox, 'alert');
-      title = `${s.errorCount} item${s.errorCount === 1 ? '' : 's'} could not sync`;
-      sub = s.errors && s.errors.length ? `${s.errors[s.errors.length - 1].path}: ${s.errors[s.errors.length - 1].message}` : 'Retrying automatically';
+      title = T.sync.failed(s.errorCount);
+      const last = s.errors && s.errors.length ? s.errors[s.errors.length - 1] : null;
+      sub = last ? [pathRun(last.path), ': ', last.message] : [T.sync.retrying];
       break;
+    }
     default:
       setIcon(iconBox, 'clock');
-      title = 'Starting…';
+      title = T.sync.starting;
   }
-  if (s.skippedCount && s.state === 'idle') sub = `${s.skippedCount} item(s) skipped — see Activity`;
+  if (s.skippedCount && s.state === 'idle') sub = [T.sync.skipped(s.skippedCount)];
   $('sync-title').textContent = title;
-  $('sync-sub').textContent = sub;
-  $('sync-sub').title = sub;
+  $('sync-sub').replaceChildren(...sub);
+  $('sync-sub').title = $('sync-sub').textContent;
 
   const transfers = (s.transfers || []).slice(0, 4).map((t) => {
     const pct = t.total ? Math.min(100, Math.round((t.bytes / t.total) * 100)) : 0;
@@ -355,8 +406,8 @@ function renderSync() {
         'div',
         { class: 'transfer-head' },
         icon(t.direction === 'upload' ? 'upload' : 'download'),
-        h('span', { class: 'name', text: t.path, title: t.path }),
-        h('span', { text: t.total > 1024 * 1024 ? `${formatBytes(t.bytes)} / ${formatBytes(t.total)}` : `${pct}%` }),
+        pathText(t.path, 'name'),
+        h('span', { class: 'transfer-amount' }, t.total > 1024 * 1024 ? `${formatBytes(t.bytes)} / ${formatBytes(t.total)}` : `${pct}%`),
       ),
       h('div', { class: 'progress' }, bar),
     );
@@ -368,33 +419,50 @@ function renderDevices() {
   const selfId = state.config.deviceId;
   const devices = state.devices || [];
   const online = devices.filter((d) => d.online).length;
-  $('devices-count').textContent = devices.length ? `${online}/${devices.length} online` : '';
+  const count = $('devices-count');
+  count.textContent = devices.length ? T.devices.count(online, devices.length) : '';
+  count.dataset.online = String(online);
+  count.dataset.total = String(devices.length);
   if (!devices.length) {
     $('device-list').replaceChildren(
-      h('li', { class: 'muted small', text: state.connection.status === 'connected' ? 'No devices yet.' : 'Device list appears once connected.' }),
+      h('li', { class: 'muted small', text: state.connection.status === 'connected' ? T.devices.none : T.devices.afterConnect }),
     );
     return;
   }
   const items = devices.map((d) => {
     const isSelf = d.id === selfId;
-    const lastSync = d.lastSync ? `Last sync ${formatRelative(d.lastSync)}` : 'Never synced';
-    const seen = !d.online && d.lastSeen ? ` · seen ${formatRelative(d.lastSeen)}` : '';
+    const lastSync = d.lastSync ? T.devices.lastSync(formatRelative(d.lastSync)) : T.devices.neverSynced;
+    const seen = !d.online && d.lastSeen ? ` · ${T.devices.seen(formatRelative(d.lastSeen))}` : '';
     return h(
       'li',
-      { class: `device-item ${d.online ? 'online' : ''}`, title: `${d.name}\nLast sync: ${formatDateTime(d.lastSync) || 'never'}` },
+      {
+        class: `device-item ${d.online ? 'online' : ''}`,
+        title: `${d.name}\n${T.devices.tooltipLastSync(formatDateTime(d.lastSync))}`,
+        dataset: { deviceId: d.id },
+      },
       h('div', { class: 'device-icon' }, icon('monitor')),
       h(
         'div',
         { class: 'device-body' },
-        h('div', { class: 'device-name' }, h('span', { text: d.name }), isSelf ? h('span', { class: 'tag', text: 'This device' }) : null),
-        h('div', { class: 'muted small', text: `${lastSync}${seen}` }),
+        h('div', { class: 'device-name' }, bdi(d.name, { class: 'device-name-text' })),
+        h(
+          'div',
+          { class: 'muted small device-sub' },
+          isSelf ? h('span', { class: 'tag', text: T.devices.thisDevice }) : null,
+          h('span', { class: 'device-sub-text', text: `${lastSync}${seen}` }),
+        ),
       ),
-      h('span', { class: `status-badge ${d.online ? 'online' : 'offline'}`, text: d.online ? 'Online' : 'Offline' }),
+      h('span', { class: `status-badge ${d.online ? 'online' : 'offline'}`, text: d.online ? T.devices.online : T.devices.offline }),
       !d.online && !isSelf
-        ? iconButton('x', 'Remove from list', async () => {
-            const res = await api.removeDevice(d.id, d.name);
-            if (!res.ok) toast(res.error, 'error');
-          }, 'danger')
+        ? iconButton(
+            'x',
+            T.devices.remove,
+            async () => {
+              const res = await api.removeDevice(d.id, d.name);
+              if (!res.ok) toast(res.error, 'error');
+            },
+            'danger',
+          )
         : null,
     );
   });
@@ -443,34 +511,37 @@ function entriesForView() {
   return { folders: [...folders.values()], files, searching: false };
 }
 
+const collator = new Intl.Collator(window.L10N.LOCALE, { numeric: true, sensitivity: 'base' });
+
 function compareBy(key, dir) {
   return (a, b) => {
     let r = 0;
     if (key === 'size') r = (a.size || 0) - (b.size || 0);
     else if (key === 'modified') r = (a.lastModified || 0) - (b.lastModified || 0);
-    else if (key === 'by') r = String(a.deviceName || '').localeCompare(String(b.deviceName || ''));
-    if (r === 0) r = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    else if (key === 'by') r = collator.compare(String(a.deviceName || ''), String(b.deviceName || ''));
+    if (r === 0) r = collator.compare(a.name, b.name);
     return r * dir;
   };
 }
 
+const STATUS_ICONS = {
+  synced: 'check',
+  pending: 'clock',
+  uploading: 'upload',
+  downloading: 'download',
+  syncing: 'sync',
+  error: 'alert',
+  skipped: 'forbid',
+};
+
 function statusBadge(status) {
-  const labels = {
-    synced: ['check', 'Synced'],
-    pending: ['clock', 'Pending'],
-    uploading: ['upload', 'Uploading'],
-    downloading: ['download', 'Downloading'],
-    syncing: ['sync', 'Syncing'],
-    error: ['alert', 'Error'],
-    skipped: ['forbid', 'Skipped'],
-  };
-  const [ic, label] = labels[status] || labels.pending;
-  return h('span', { class: `status-badge ${status}` }, icon(ic), label);
+  const key = STATUS_ICONS[status] ? status : 'pending';
+  return h('span', { class: `status-badge ${key}` }, icon(STATUS_ICONS[key]), T.status[key]);
 }
 
 function fileIcon(name) {
   const ext = extensionOf(name);
-  return h('div', { class: 'file-icon' }, ext ? h('span', { class: 'ext', text: ext }) : icon('file'));
+  return h('div', { class: 'file-icon' }, ext ? h('span', { class: 'ext', dir: 'ltr', text: ext }) : icon('file'));
 }
 
 async function runAction(promise, successMessage) {
@@ -484,7 +555,7 @@ function folderRow(folder) {
   const open = () => navigate(folder.path);
   return h(
     'tr',
-    { class: 'row-folder', ondblclick: open },
+    { class: 'row-folder', ondblclick: open, dataset: { path: folder.path } },
     h(
       'td',
       null,
@@ -492,12 +563,12 @@ function folderRow(folder) {
         'div',
         { class: 'name-cell' },
         h('div', { class: 'file-icon folder' }, icon('folder')),
-        h('span', { class: 'name', text: folder.name, title: folder.path, onclick: open }),
-        h('span', { class: 'sub', text: `${folder.count} file${folder.count === 1 ? '' : 's'}` }),
+        bdi(folder.name, { class: 'name', title: folder.path, onclick: open }),
+        h('span', { class: 'sub', text: T.files.folderCount(folder.count) }),
       ),
     ),
     h('td', { text: formatBytes(folder.size) }),
-    h('td', { text: formatRelative(folder.lastModified), title: formatDateTime(folder.lastModified) }),
+    h('td', { class: 'col-mod', text: formatRelative(folder.lastModified), title: formatDateTime(folder.lastModified) }),
     h('td', { class: 'col-by', text: '—' }),
     h('td', null, statusBadge(folderStatus(folder.statuses))),
     h(
@@ -506,8 +577,13 @@ function folderRow(folder) {
       h(
         'div',
         { class: 'actions' },
-        iconButton('chevron', 'Open folder', open),
-        iconButton('trash', 'Delete folder from cloud', () => runAction(api.deleteFile(folder.path, true), (r) => `Deleted ${r.deleted} file(s)`), 'danger'),
+        iconButton('chevron', T.files.openFolder, open),
+        iconButton(
+          'trash',
+          T.files.deleteFolder,
+          () => runAction(api.deleteFile(folder.path, true), (r) => T.files.deletedFiles(r.deleted)),
+          'danger',
+        ),
       ),
     ),
   );
@@ -517,9 +593,10 @@ function fileRow(file, searching) {
   const local = file.status === 'synced' || file.status === 'uploading';
   const open = () => runAction(api.openFile(file.path));
   const dir = dirName(file.path);
+  const by = deviceLabel(file.deviceName, file.deviceId);
   return h(
     'tr',
-    { class: 'row-file', ondblclick: local ? open : null },
+    { class: 'row-file', ondblclick: local ? open : null, dataset: { path: file.path } },
     h(
       'td',
       null,
@@ -527,13 +604,13 @@ function fileRow(file, searching) {
         'div',
         { class: 'name-cell' },
         fileIcon(file.name),
-        h('span', { class: 'name', text: file.name, title: file.path }),
-        searching && dir ? h('span', { class: 'sub', text: dir, title: dir }) : null,
+        bdi(file.name, { class: 'name', title: file.path }),
+        searching && dir ? pathText(dir, 'sub') : null,
       ),
     ),
     h('td', { text: formatBytes(file.size) }),
-    h('td', { text: formatRelative(file.lastModified), title: formatDateTime(file.lastModified) }),
-    h('td', { class: 'col-by', text: file.deviceName || '—', title: file.deviceName || '' }),
+    h('td', { class: 'col-mod', text: formatRelative(file.lastModified), title: formatDateTime(file.lastModified) }),
+    h('td', { class: 'col-by', title: by }, bdi(by)),
     h('td', null, statusBadge(file.status)),
     h(
       'td',
@@ -541,10 +618,10 @@ function fileRow(file, searching) {
       h(
         'div',
         { class: 'actions' },
-        local ? iconButton('open', 'Open', open) : null,
-        local ? iconButton('reveal', 'Show in folder', () => runAction(api.showFile(file.path))) : null,
-        iconButton('download', 'Save a copy…', () => runAction(api.saveFileAs(file.path), (r) => `Saved to ${r.savedTo}`)),
-        iconButton('trash', 'Delete from cloud', () => runAction(api.deleteFile(file.path, false), 'File deleted'), 'danger'),
+        local ? iconButton('open', T.files.open, open) : null,
+        local ? iconButton('reveal', T.files.showInFolder, () => runAction(api.showFile(file.path))) : null,
+        iconButton('download', T.files.saveCopy, () => runAction(api.saveFileAs(file.path), (r) => T.files.savedTo(r.savedTo))),
+        iconButton('trash', T.files.delete, () => runAction(api.deleteFile(file.path, false), T.files.deletedFile), 'danger'),
       ),
     ),
   );
@@ -553,18 +630,27 @@ function fileRow(file, searching) {
 function renderBreadcrumbs() {
   const parts = state.cwd ? state.cwd.split('/') : [];
   const crumbs = [
-    h('button', { class: `crumb ${parts.length ? '' : 'current'}`, type: 'button', onclick: () => navigate('') }, icon('home'), 'All files'),
+    h(
+      'button',
+      { class: `crumb ${parts.length ? '' : 'current'}`, type: 'button', dataset: { root: '1' }, onclick: () => navigate('') },
+      icon('home'),
+      T.files.allFiles,
+    ),
   ];
   parts.forEach((part, i) => {
     const target = parts.slice(0, i + 1).join('/');
     crumbs.push(h('span', { class: 'crumb-sep' }, icon('chevron')));
     crumbs.push(
-      h('button', { class: `crumb ${i === parts.length - 1 ? 'current' : ''}`, type: 'button', title: target, onclick: () => navigate(target) }, part),
+      h(
+        'button',
+        { class: `crumb ${i === parts.length - 1 ? 'current' : ''}`, type: 'button', title: target, onclick: () => navigate(target) },
+        bdi(part),
+      ),
     );
   });
   if (state.search.trim()) {
     crumbs.push(h('span', { class: 'crumb-sep' }, icon('chevron')));
-    crumbs.push(h('span', { class: 'crumb current', text: `Search: "${state.search.trim()}"` }));
+    crumbs.push(h('span', { class: 'crumb current' }, T.files.search(`\u2068${state.search.trim()}\u2069`)));
   }
   $('breadcrumbs').replaceChildren(...crumbs);
 }
@@ -585,27 +671,31 @@ function renderFiles() {
 
   const empty = $('files-empty');
   if (!rows.length) {
-    let title = 'No files yet';
-    let sub = 'Drop files here, click Upload, or add files to your sync folder.';
+    let title = T.files.emptyTitle;
+    let sub = T.files.emptySub;
     if (searching) {
-      title = 'No matching files';
-      sub = 'Try a different search.';
+      title = T.files.noMatchTitle;
+      sub = T.files.noMatchSub;
     } else if (state.cwd) {
-      title = 'This folder is empty';
-      sub = 'Drop files here to upload them into this folder.';
+      title = T.files.emptyFolderTitle;
+      sub = T.files.emptyFolderSub;
     } else if (state.connection.status !== 'connected' && !state.files.length) {
-      title = 'Waiting for the server';
-      sub = 'The file list appears as soon as the connection is established.';
+      title = T.files.waitingTitle;
+      sub = T.files.waitingSub;
     }
-    empty.replaceChildren(icon(searching ? 'search' : 'cloud'), h('div', { class: 'empty-title', text: title }), h('div', { class: 'muted small', text: sub }));
+    empty.replaceChildren(
+      icon(searching ? 'search' : 'cloud'),
+      h('div', { class: 'empty-title', text: title }),
+      h('div', { class: 'muted small', text: sub }),
+    );
     empty.hidden = false;
   } else {
     empty.hidden = true;
   }
 
   const totalSize = state.files.reduce((sum, f) => sum + (f.size || 0), 0);
-  let summary = `${state.files.length} file${state.files.length === 1 ? '' : 's'} · ${formatBytes(totalSize)} in workspace`;
-  if (files.length > MAX_ROWS) summary += ` · showing first ${MAX_ROWS} results`;
+  let summary = T.files.summary(state.files.length, formatBytes(totalSize));
+  if (files.length > MAX_ROWS) summary += T.files.showingFirst(MAX_ROWS);
   $('files-summary').textContent = summary;
 }
 
@@ -635,32 +725,24 @@ const ACTIVITY_ICONS = {
 };
 
 function describeActivity(entry) {
-  const who = h('strong', { text: entry.deviceName || 'Unknown device' });
-  const file = entry.path ? h('code', { text: entry.path }) : null;
-  switch (entry.type) {
-    case 'added':
-      return [who, ' uploaded ', file];
-    case 'updated':
-      return [who, ' updated ', file];
-    case 'deleted':
-      return [who, ' deleted ', file];
-    case 'device-online':
-      return [who, ' came online'];
-    case 'device-offline':
-      return [who, ' went offline'];
-    case 'device-renamed':
-      return [h('strong', { text: entry.detail || 'A device' }), ' was renamed to ', who];
-    case 'device-removed':
-      return [who, ' was removed from the device list'];
-    default:
-      return [entry.detail || entry.type];
+  const parts = {
+    who: h('strong', null, bdi(deviceLabel(entry.deviceName, entry.deviceId))),
+    old: h('strong', null, bdi(entry.detail || T.activity.someDevice)),
+    file: entry.path ? pathRun(entry.path, 'code') : '',
+  };
+  const template = T.activity[entry.type];
+  if (Array.isArray(template)) return template.map((piece) => (piece.startsWith('{') ? parts[piece.slice(1, -1)] : piece));
+  if (entry.type === 'bulk') {
+    const n = Number.parseInt(String(entry.detail || ''), 10);
+    return [T.activity.bulk(Number.isFinite(n) ? n : 0)];
   }
+  return [entry.detail || entry.type];
 }
 
 function activityItem(entry, fresh = false) {
   const extra = [];
   if (entry.size !== undefined && entry.type !== 'deleted') extra.push(formatBytes(entry.size));
-  if (entry.local) extra.push('this device');
+  if (entry.local) extra.push(T.activity.fromThisDevice);
   const meta = [formatRelative(entry.ts), ...extra];
   return h(
     'li',
@@ -727,7 +809,7 @@ function setupDragAndDrop() {
   let depth = 0;
   const overlay = $('drop-overlay');
   const show = () => {
-    $('drop-target').textContent = `Into ${state.cwd ? `“${state.cwd}”` : 'the workspace root'} — files are copied into your sync folder and uploaded`;
+    $('drop-target').textContent = state.cwd ? T.drop.into(state.cwd) : T.drop.intoRoot;
     overlay.hidden = false;
   };
   const hide = () => {
@@ -760,12 +842,12 @@ function setupDragAndDrop() {
       .map((file) => api.pathForFile(file))
       .filter(Boolean);
     if (!paths.length) {
-      toast('Nothing to upload: only files and folders from your computer can be dropped here.', 'warn');
+      toast(T.drop.nothing, 'warn');
       return;
     }
     const res = await api.importPaths(paths, state.cwd);
     if (!res.ok) toast(res.error, 'error');
-    else toast(`Uploading ${res.count} file${res.count === 1 ? '' : 's'}…`, 'success', 3000);
+    else toast(T.files.uploading(res.count), 'success', 3000);
   });
   window.addEventListener('blur', () => {
     if (!overlay.hidden) hide();
@@ -804,7 +886,7 @@ async function submitRename(event) {
   state.config.deviceName = res.deviceName;
   stopRename();
   renderDevice();
-  toast(res.offline ? 'Renamed. Other devices will see the new name once you are back online.' : 'Device renamed', 'success', 3000);
+  toast(res.offline ? T.devices.renamedOffline : T.devices.renamed, 'success', 3000);
 }
 
 function bindUi() {
@@ -847,9 +929,7 @@ function bindUi() {
     }
   });
 
-  $('btn-upload').addEventListener('click', () =>
-    runAction(api.pickAndImport(state.cwd), (r) => `Uploading ${r.count} file${r.count === 1 ? '' : 's'}…`),
-  );
+  $('btn-upload').addEventListener('click', () => runAction(api.pickAndImport(state.cwd), (r) => T.files.uploading(r.count)));
 
   $('in-search').addEventListener('input', (e) => {
     state.search = e.target.value;
@@ -879,7 +959,20 @@ function bindUi() {
     });
   }
 
+  $('modal-confirm').addEventListener('click', () => closeConfirm(true));
+  $('modal-cancel').addEventListener('click', () => closeConfirm(false));
+  $('modal').addEventListener('click', (e) => {
+    if (e.target === $('modal')) closeConfirm(false);
+  });
+
   document.addEventListener('keydown', (e) => {
+    if (activeConfirm) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeConfirm(false);
+      }
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && state.view === 'dashboard') {
       e.preventDefault();
       state.tab = 'files';
@@ -931,6 +1024,10 @@ function subscribe() {
   api.on('notice', (notice) => toast(notice.message, notice.level === 'error' ? 'error' : 'warn', 9000));
   api.on('connect-progress', (text) => {
     if (state.connecting) $('login-progress-text').textContent = text;
+  });
+  api.on('confirm', (request) => {
+    confirmQueue.push(request);
+    showNextConfirm();
   });
 }
 

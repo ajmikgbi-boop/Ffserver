@@ -6,6 +6,7 @@ const https = require('node:https');
 const crypto = require('node:crypto');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const { S } = require('./i18n');
 
 const agents = {
   'http:': new http.Agent({ keepAlive: true, maxSockets: 8 }),
@@ -24,7 +25,7 @@ class TransferError extends Error {
 }
 
 function abortError() {
-  const err = new Error('Transfer cancelled');
+  const err = new Error(S.transfer.cancelled);
   err.name = 'AbortError';
   return err;
 }
@@ -65,15 +66,14 @@ function readBody(res, limit = 4096) {
 
 function describeS3Error(status, body) {
   const code = /<Code>([^<]+)<\/Code>/.exec(body);
-  const message = /<Message>([^<]+)<\/Message>/.exec(body);
-  return `Storage responded ${status}${code ? ` ${code[1]}` : ''}${message ? `: ${message[1]}` : ''}`;
+  return S.transfer.storageStatus(status, code ? code[1] : null);
 }
 
 function openRequest(url, { method, headers, signal }) {
   const target = new URL(url);
   const lib = target.protocol === 'https:' ? https : http;
   const req = lib.request(target, { method, headers, agent: agents[target.protocol] });
-  req.setTimeout(IDLE_TIMEOUT_MS, () => req.destroy(new TransferError('Network timeout')));
+  req.setTimeout(IDLE_TIMEOUT_MS, () => req.destroy(new TransferError(S.transfer.timeout)));
   if (signal) {
     if (signal.aborted) {
       req.destroy(abortError());
@@ -178,10 +178,10 @@ async function downloadToFile({ url, dest, expectedSha256, expectedSize, onProgr
   );
   const sha256 = hash.digest('hex');
   if (typeof expectedSize === 'number' && bytes !== expectedSize) {
-    throw new TransferError(`Downloaded ${bytes} bytes but expected ${expectedSize}`);
+    throw new TransferError(S.transfer.sizeMismatch(bytes, expectedSize));
   }
   if (expectedSha256 && sha256 !== expectedSha256) {
-    throw new TransferError('Downloaded file failed SHA-256 verification');
+    throw new TransferError(S.transfer.hashMismatch);
   }
   return { sha256, size: bytes };
 }

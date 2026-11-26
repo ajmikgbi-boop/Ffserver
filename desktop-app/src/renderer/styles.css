@@ -1,8 +1,10 @@
-/* CompanySync desktop UI. Follows the OS light/dark setting (or the in-app override). */
+/* CompanySync desktop UI — Arabic, right-to-left. Follows the OS light/dark setting (or the in-app override).
+   Layout uses logical properties (inline-start/end) so it mirrors automatically with dir="rtl". */
 
 :root {
   color-scheme: light dark;
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', system-ui, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* Segoe UI (Windows) and Tahoma both ship complete Arabic glyphs; the rest cover macOS and Linux. */
+  --font: 'Segoe UI', -apple-system, BlinkMacSystemFont, Tahoma, 'Geeza Pro', 'Noto Sans Arabic UI', 'Noto Sans Arabic', 'Noto Naskh Arabic', sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, Menlo, monospace;
   --radius: 12px;
   --radius-sm: 8px;
@@ -114,8 +116,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 13.5px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -156,7 +158,43 @@ body {
 }
 
 .small {
-  font-size: 12px;
+  font-size: 12.5px;
+}
+
+/* ---------- Bidi safety ---------- */
+
+/* Technical text (paths, URLs, server codes, versions) is always an isolated left-to-right run. */
+.ltr,
+[dir='ltr'] {
+  unicode-bidi: isolate;
+}
+
+bdi {
+  unicode-bidi: isolate;
+}
+
+/* Left-to-right inputs inside the right-to-left form. */
+.ltr-input {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+/* A path truncated at its start: the box is right-to-left so the overflow (and the
+   ellipsis) happens on the left, while the path itself stays an isolated LTR run. */
+.path-trunc {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: right;
+}
+
+/* Icons that point in the reading direction (chevrons) are mirrored. */
+[dir='rtl'] .flip-rtl {
+  transform: scaleX(-1);
 }
 
 code,
@@ -254,6 +292,16 @@ input::placeholder {
 
 .btn-outline:hover:not(:disabled) {
   background: var(--hover);
+}
+
+/* Fixed deep red in both themes so white text keeps a 4.5:1 contrast. */
+.btn-danger {
+  background: #c93636;
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(0.92);
 }
 
 .btn-ghost {
@@ -389,7 +437,8 @@ input::placeholder {
   align-items: center;
   gap: 8px;
   height: 38px;
-  padding: 0 4px 0 12px;
+  padding-block: 0;
+  padding-inline: 12px 4px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -398,12 +447,6 @@ input::placeholder {
 
 .folder-picker-path {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
   font-family: var(--mono);
   font-size: 12px;
 }
@@ -471,7 +514,8 @@ input::placeholder {
   gap: 9px;
   font-weight: 700;
   font-size: 15px;
-  margin-right: 6px;
+  margin-inline-end: 6px;
+  flex: none;
 }
 
 .spacer {
@@ -479,6 +523,8 @@ input::placeholder {
 }
 
 .chip {
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -499,6 +545,8 @@ input::placeholder {
 }
 
 .conn-pill {
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -512,7 +560,7 @@ input::placeholder {
   max-width: 360px;
 }
 
-.conn-pill span:last-child {
+.conn-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -584,31 +632,30 @@ input::placeholder {
   flex-direction: column;
 }
 
+/* No letter-spacing or uppercase: both break or do nothing for Arabic script. */
 .card-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 22px;
+  min-height: 24px;
   margin-bottom: 12px;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--text-3);
 }
 
 .count {
   display: inline-block;
   min-width: 20px;
-  padding: 0 6px;
+  padding: 0 7px;
   border-radius: 999px;
   background: var(--surface-3);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 650;
-  letter-spacing: 0;
   text-align: center;
-  line-height: 18px;
+  line-height: 20px;
+  white-space: nowrap;
 }
 
 .count:empty {
@@ -664,7 +711,7 @@ input::placeholder {
 }
 
 .card-title .link-btn {
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 .link-btn {
@@ -677,10 +724,8 @@ input::placeholder {
   border-radius: 6px;
   background: transparent;
   color: var(--accent);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
   cursor: pointer;
 }
 
@@ -774,11 +819,6 @@ input::placeholder {
   color: var(--text-2);
   font-family: var(--mono);
   font-size: 11.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
 }
 
 .transfers {
@@ -806,9 +846,11 @@ input::placeholder {
 
 .transfer-head .name {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.transfer-amount {
+  flex: none;
   white-space: nowrap;
 }
 
@@ -868,7 +910,7 @@ input::placeholder {
 .device-item .device-icon::after {
   content: '';
   position: absolute;
-  right: -2px;
+  inset-inline-end: -2px;
   bottom: -2px;
   width: 10px;
   height: 10px;
@@ -893,7 +935,22 @@ input::placeholder {
   font-weight: 600;
 }
 
-.device-name span:first-child {
+.device-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.device-sub-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -905,20 +962,22 @@ input::placeholder {
   border-radius: 5px;
   background: var(--primary-soft);
   color: var(--accent);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
-  line-height: 17px;
+  line-height: 19px;
+  white-space: nowrap;
 }
 
 .status-badge {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 0 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 650;
-  line-height: 20px;
+  line-height: 22px;
   white-space: nowrap;
 }
 
@@ -1077,7 +1136,7 @@ input::placeholder {
 
 .search .i {
   position: absolute;
-  left: 10px;
+  inset-inline-start: 10px;
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-3);
@@ -1085,7 +1144,7 @@ input::placeholder {
 
 .search input {
   height: 32px;
-  padding-left: 32px;
+  padding-inline-start: 32px;
   background: var(--surface-2);
 }
 
@@ -1111,9 +1170,9 @@ input::placeholder {
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 650;
-  text-align: left;
+  text-align: start;
   white-space: nowrap;
   user-select: none;
 }
@@ -1153,11 +1212,11 @@ input::placeholder {
 }
 
 .col-size {
-  width: 92px;
+  width: 96px;
 }
 
 .col-mod {
-  width: 128px;
+  width: 132px;
 }
 
 .col-by {
@@ -1165,7 +1224,7 @@ input::placeholder {
 }
 
 .col-status {
-  width: 124px;
+  width: 132px;
 }
 
 .col-actions {
@@ -1182,15 +1241,22 @@ input::placeholder {
 }
 
 .name-cell .name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .name-cell .sub {
+  flex: 0 10 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-3);
   font-weight: 400;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .file-icon {
@@ -1271,7 +1337,7 @@ tr:hover .actions,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 /* ---------- Activity ---------- */
@@ -1347,8 +1413,15 @@ tr:hover .actions,
   font-weight: 650;
 }
 
+/* Workspace paths use the UI font: Arabic file names look broken in monospace fonts. */
 .activity-text code {
-  padding: 1px 5px;
+  font-family: var(--font);
+  font-size: 13px;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+  overflow-wrap: anywhere;
+  padding: 0 5px;
   border-radius: 5px;
   background: var(--surface-3);
   color: var(--text);
@@ -1419,7 +1492,7 @@ tr:hover .actions,
 
 .toasts {
   position: fixed;
-  right: 18px;
+  inset-inline-end: 18px;
   bottom: 18px;
   z-index: 60;
   display: grid;
@@ -1431,25 +1504,26 @@ tr:hover .actions,
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 12px 12px 12px 14px;
+  padding-block: 12px;
+  padding-inline: 14px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  border-left: 4px solid var(--primary);
+  border-inline-start: 4px solid var(--primary);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
   animation: toast-in 0.2s ease-out;
 }
 
 .toast.warn {
-  border-left-color: var(--warning);
+  border-inline-start-color: var(--warning);
 }
 
 .toast.error {
-  border-left-color: var(--danger);
+  border-inline-start-color: var(--danger);
 }
 
 .toast.success {
-  border-left-color: var(--success);
+  border-inline-start-color: var(--success);
 }
 
 .toast-text {
@@ -1460,7 +1534,8 @@ tr:hover .actions,
 .toast .icon-btn {
   width: 24px;
   height: 24px;
-  margin: -3px -3px 0 0;
+  margin-block-start: -3px;
+  margin-inline-end: -3px;
 }
 
 @keyframes toast-in {
@@ -1470,14 +1545,100 @@ tr:hover .actions,
   }
 }
 
-@media (max-width: 1100px) {
+/* ---------- Confirmation modal ---------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(13, 18, 27, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  width: min(460px, 100%);
+  padding: 22px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  animation: toast-in 0.15s ease-out;
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.modal-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--primary-soft);
+  color: var(--accent);
+}
+
+.modal-icon[data-tone='danger'] {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.modal-icon .i {
+  width: 20px;
+  height: 20px;
+}
+
+.modal-body {
+  min-width: 0;
+}
+
+.modal-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.modal-detail {
+  margin: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* In right-to-left dialogs the primary action sits on the start (right) of the pair. */
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+/* Keep the name column readable on smaller windows by dropping secondary columns. */
+@media (max-width: 1240px) {
   .col-by {
     display: none;
   }
+}
+
+@media (max-width: 1100px) {
+  .col-mod {
+    display: none;
+  }
   .layout {
-    grid-template-columns: 290px minmax(0, 1fr);
+    grid-template-columns: 280px minmax(0, 1fr);
   }
   .search {
-    width: 180px;
+    width: 190px;
+  }
+  #btn-sync-now span {
+    display: none;
   }
 }

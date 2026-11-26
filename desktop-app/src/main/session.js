@@ -4,6 +4,7 @@ const { EventEmitter } = require('node:events');
 const { CloudClient } = require('./cloud-client');
 const { SyncEngine } = require('./sync-engine');
 const { SyncState } = require('./sync-state');
+const { S } = require('./i18n');
 
 /** Safety net: rescan everything periodically in case a watcher event was missed. */
 const PERIODIC_RESCAN_MS = 10 * 60 * 1000;
@@ -58,7 +59,7 @@ class SyncSession extends EventEmitter {
     });
     client.on('ready', (data) => this._onReady(data));
     client.on('disconnected', (reason) => this.log.info(`[session] disconnected: ${reason}`));
-    client.on('connect-error', (err) => this.log.warn(`[session] connection error: ${err.message}`));
+    client.on('connect-error', (err) => this.log.warn(`[session] connection error: ${err.code || ''} ${err.detail || err.message}`));
     client.on('devices:update', (payload) => {
       this.devices = Array.isArray(payload && payload.devices) ? payload.devices : [];
       this.emit('devices', this.devices);
@@ -157,7 +158,7 @@ class SyncSession extends EventEmitter {
         if (err.permanent) finish({ ok: false, permanent: true, error: err.message });
       };
       const timer = setTimeout(
-        () => finish({ ok: false, timeout: true, error: this.client.lastError ? this.client.lastError.message : 'Timed out' }),
+        () => finish({ ok: false, timeout: true, error: this.client.lastError ? this.client.lastError.message : S.connect.timedOut }),
         timeoutMs,
       );
       this.client.on('ready', onReady);

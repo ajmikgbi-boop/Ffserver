@@ -14,6 +14,7 @@ const EVENTS = new Set([
   'notice',
   'connect-progress',
   'theme-updated',
+  'confirm',
 ]);
 
 /**
@@ -38,6 +39,8 @@ contextBridge.exposeInMainWorld('companySync', {
   pickAndImport: (targetDir) => ipcRenderer.invoke('files:pick-and-import', targetDir),
   setPreferences: (prefs) => ipcRenderer.invoke('prefs:set', prefs),
   openLogs: () => ipcRenderer.invoke('app:open-logs'),
+  /** Answer a confirmation request that the main process sent through the 'confirm' event. */
+  respondConfirm: (id, ok) => ipcRenderer.send('confirm:response', { id, ok: Boolean(ok) }),
   /** Absolute path of a dropped File (File.path no longer exists in modern Electron). */
   pathForFile: (file) => {
     try {

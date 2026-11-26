@@ -106,7 +106,7 @@ Each device keeps, per (Server Code, folder), the SHA-256 of the last version it
 | = remote | = local | any | in sync |
 | = base | changed | ✓ | download |
 | changed | = base | ✓ | upload |
-| changed | changed | any | **conflict**: cloud version keeps the name, local copy is saved as `name (conflict from <device> <date>).ext` and uploaded |
+| changed | changed | any | **conflict**: cloud version keeps the name, local copy is saved as `name (نسخة متعارضة من <device> <date>).ext` ("conflicted copy from …") and uploaded |
 | = base | missing | ✓ | deleted in cloud → move local file to Recycle Bin / Trash |
 | present | missing | ✗ | new local file → upload |
 | missing | = base | ✓ | deleted locally → delete from cloud |
@@ -249,6 +249,20 @@ Nothing else is needed. Files, hashes, the device list and the activity log are 
 
 ## 4. Using the desktop app
 
+The desktop app's interface is **Arabic with a full right-to-left layout** (see [Language & RTL](#language--rtl) below). The English names in this section map to these on-screen labels:
+
+| English | Arabic label |
+|---|---|
+| Server URL / Server Code / Device Name | عنوان الخادم / رمز الخادم / اسم الجهاز |
+| Remember this server & auto-connect | تذكّر هذا الخادم واتصل تلقائيًا |
+| Connect | اتصال |
+| Switch Server / Disconnect | تبديل الخادم / قطع الاتصال |
+| Rename Device | إعادة تسمية الجهاز |
+| Open Folder / Change Folder | فتح المجلد / تغيير المجلد |
+| Sync now | مزامنة الآن |
+| Cloud Files / Activity | ملفات السحابة / النشاط |
+| Connected / Offline / Syncing / Up to date | متصل / غير متصل / جاري المزامنة / محدّث |
+
 - **Connection screen**: enter the **Server URL**, the **Server Code** and a **Device Name** (e.g. "Main Office PC"), and pick the sync folder (default `Documents/CompanySync`). With **Remember this server & auto-connect** checked, the settings are saved to `userData/config.json` and the app connects on every start, even offline or while the server wakes up. Unchecked, the URL and code are kept in memory only.
   - `userData` is `%APPDATA%\CompanySync` on Windows and `~/Library/Application Support/CompanySync` on macOS.
 - **Dashboard** (in the order it appears on screen):
@@ -279,6 +293,20 @@ Nothing else is needed. Files, hashes, the device list and the activity log are 
 - Closing the window keeps syncing in the **system tray**. The tray menu has Open, status, Open Sync Folder, Sync Now, Launch at Login and Quit.
 - Ignored files: `.DS_Store`, `Thumbs.db`, `desktop.ini`, Office `~$` lock files, `*.tmp` / `*.part` / `*.crdownload` / `*.swp`, and the app's own `.companysync` folder.
 - Logs: `userData/logs/companysync.log`.
+
+### Language & RTL
+
+- **Layout:** `index.html` is `lang="ar" dir="rtl"`, and the stylesheet uses logical properties (`inline-start/end`), so sidebars, cards, lists, toasts and dialogs mirror automatically. Direction-bearing icons (chevrons) are flipped. The font stack starts with `'Segoe UI'` and `Tahoma`, both of which ship complete Arabic glyphs, and letter-spacing is avoided because it breaks Arabic letter joining.
+- **Bidi safety:**
+  - The Server URL and Server Code inputs are `dir="ltr"`.
+  - Paths (local folders and workspace files) render as a left-to-right run in which **each segment is isolated with its own direction**. Slashes never flip, and Arabic names keep their extension attached (`تقارير/الميزانية 2027.xlsx`).
+  - User-provided names (devices, files) are wrapped in `<bdi>`, so e.g. `Laptop (Sales)` keeps its parentheses.
+  - Text built in the main process (tray, notifications, dialogs) uses Unicode isolates (U+2066–U+2069) for the same purpose.
+- **Confirmations:** confirmation dialogs are in-app RTL modals, because native message boxes follow the OS layout direction.
+- **Where the strings live:** `desktop-app/src/main/i18n.js` (main process) and `desktop-app/src/renderer/i18n.js` (UI).
+- **Grammar and errors:** plurals use `Intl.PluralRules('ar')` (one/two/few/many forms). Server errors (English) are translated on the client by error code.
+- **Digits:** Western digits (`ar-u-nu-latn`) keep sizes, dates and versions consistent with paths and codes. Change `LOCALE` to `'ar'` in both i18n files for Arabic-Indic digits.
+- **Server:** the server's own log and error text stays English; the desktop app never shows it untranslated.
 
 ---
 
@@ -348,4 +376,4 @@ To test two "devices" on one machine, run the packaged app on one account and `n
 | Stuck on "Reconnecting…" | Check `https://<your-domain>/health` in a browser. The app retries forever and resumes once the server answers. |
 | Server log shows `AccessDenied` / `SignatureDoesNotMatch` | Wrong R2 keys, a token without **Object Read & Write**, or a token not scoped to this bucket. |
 | A file shows **Skipped** | Its name is invalid on this OS (e.g. `:` on Windows), or it differs only by letter case from another file. Rename it on the device that created it. |
-| `name (conflict from …)` files appear | The same file was edited on two devices before they could sync. Both versions are kept: merge them and delete the conflict copy. |
+| `name (نسخة متعارضة من …)` files appear | The same file was edited on two devices before they could sync. Both versions are kept: merge them and delete the conflict copy. |
