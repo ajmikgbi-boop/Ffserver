@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CompanySync</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Icon sprite -->
+    <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
+      <defs>
+        <linearGradient id="logo-gradient" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#4f7cff" />
+          <stop offset="1" stop-color="#7b5cff" />
+        </linearGradient>
+      </defs>
+      <symbol id="i-logo" viewBox="0 0 64 64">
+        <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#logo-gradient)" />
+        <path d="M21 46h23.5a9 9 0 0 0 1.2-17.9A13 13 0 0 0 20.6 26 10 10 0 0 0 21 46z" fill="#fff" />
+        <g fill="none" stroke="#4f63ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M26 36.5a6.5 6.5 0 0 1 11.6-4" />
+          <path d="M38.2 28.4v4.4h-4.4" />
+          <path d="M39 37.5a6.5 6.5 0 0 1-11.6 4" />
+          <path d="M26.8 45.6v-4.4h4.4" />
+        </g>
+      </symbol>
+      <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.8l2 2.2h7.2A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" /></symbol>
+        <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z" /><path d="M14 3v5h5" /></symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M5 19.5h14" /></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11" /><path d="m7.5 10.5 4.5 4.5 4.5-4.5" /><path d="M5 19.5h14" /></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16" /><path d="M10 11v6m4-6v6" /><path d="m6 7 1 11.5A2 2 0 0 0 9 20.3h6a2 2 0 0 0 2-1.8L18 7" /><path d="M9 7V4.5h6V7" /></symbol>
+        <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6" /><path d="m20 4-8.5 8.5" /><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></symbol>
+        <symbol id="i-reveal" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.8l2 2.2h7.2A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" /><circle cx="12" cy="13.5" r="2.2" /></symbol>
+        <symbol id="i-sync" viewBox="0 0 24 24"><path d="M19.5 10A8 8 0 0 0 5.2 7.2L4 8.5" /><path d="M4 4.5v4h4" /><path d="M4.5 14a8 8 0 0 0 14.3 2.8l1.2-1.3" /><path d="M20 19.5v-4h-4" /></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" /></symbol>
+        <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="m8 12.3 2.8 2.8L16.2 9.5" /></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.2 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0z" /><path d="M12 9.5v4.5" /><path d="M12 17.2v.1" /></symbol>
+        <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7.5 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.6 1.3 3.9 3.9 0 0 1-.5 7.7z" /></symbol>
+        <symbol id="i-cloud-off" viewBox="0 0 24 24"><path d="M7.5 18.5a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 2-3.3M12.6 5.1a6 6 0 0 1 5.9 5.7 3.9 3.9 0 0 1 1.6 7.1" /><path d="m3 3 18 18" /></symbol>
+        <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8.5 20h7M12 16v4" /></symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2m0 15v2M4.6 4.6 6 6m12 12 1.4 1.4M2.5 12h2m15 0h2M4.6 19.4 6 18M18 6l1.4-1.4" /></symbol>
+        <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z" /></symbol>
+        <symbol id="i-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" /></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6" /></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11m0-11-11 11" /></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4.2L19.3 8.9a2.2 2.2 0 0 0 0-3.1l-1.1-1.1a2.2 2.2 0 0 0-3.1 0L4 15.8z" /><path d="m13.5 6.3 4.2 4.2" /></symbol>
+        <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4" /><path d="m11 12 8.5-8.5M16.5 6.5l2.5 2.5M14.5 8.5l2 2" /></symbol>
+        <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11.2 12 4.5l8 6.7" /><path d="M6.5 9.5V19.5h11V9.5" /></symbol>
+        <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v8" /><path d="M6.6 7a7.5 7.5 0 1 0 10.8 0" /></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></symbol>
+        <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4" /></symbol>
+        <symbol id="i-server" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="2" /><rect x="4" y="13" width="16" height="7" rx="2" /><path d="M8 7.5h.01M8 16.5h.01" /></symbol>
+        <symbol id="i-forbid" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="m6 6 12 12" /></symbol>
+      </g>
+    </svg>
+
+    <!-- ===================== Connection screen ===================== -->
+    <section id="view-login" class="view view-login" hidden>
+      <div class="login-card">
+        <div class="login-brand">
+          <svg class="logo-lg" aria-hidden="true"><use href="#i-logo" /></svg>
+          <div>
+            <h1>CompanySync</h1>
+            <p class="muted">Connect this computer to your team's sync server.</p>
+          </div>
+        </div>
+
+        <form id="login-form" class="login-form" novalidate autocomplete="off">
+          <label class="field">
+            <span class="field-label">Server URL</span>
+            <input id="in-url" type="text" placeholder="https://sync.yourcompany.com" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span class="field-label">Server Code</span>
+            <input id="in-code" type="text" placeholder="e.g. acme-hq" spellcheck="false" />
+            <small class="field-hint">Everyone who uses the same code shares one workspace. Case-sensitive.</small>
+          </label>
+          <label class="field">
+            <span class="field-label">Device Name</span>
+            <input id="in-name" type="text" maxlength="64" placeholder="Main Office PC" spellcheck="false" />
+          </label>
+          <div class="field">
+            <span class="field-label">Sync folder</span>
+            <div class="folder-picker">
+              <svg class="i" aria-hidden="true"><use href="#i-folder" /></svg>
+              <span class="folder-picker-path" id="in-folder"></span>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-pick-folder">Change…</button>
+            </div>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="in-remember" checked />
+            <span>Remember this server &amp; auto-connect</span>
+          </label>
+
+          <div id="login-error" class="alert alert-error" role="alert" hidden></div>
+          <div id="login-progress" class="login-progress" hidden>
+            <span class="spinner" aria-hidden="true"></span><span id="login-progress-text">Connecting…</span>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block btn-lg" id="btn-connect">Connect</button>
+        </form>
+        <div class="login-footer muted small">Version <span id="app-version"></span></div>
+      </div>
+    </section>
+
+    <!-- ===================== Dashboard ===================== -->
+    <section id="view-dashboard" class="view view-dashboard" hidden>
+      <header class="topbar">
+        <div class="topbar-brand">
+          <svg class="logo-sm" aria-hidden="true"><use href="#i-logo" /></svg>
+          <span>CompanySync</span>
+        </div>
+        <div class="chip" id="ws-chip" title="Server Code">
+          <svg class="i" aria-hidden="true"><use href="#i-key" /></svg>
+          <span id="ws-code"></span>
+        </div>
+        <div class="conn-pill" id="conn-pill" data-status="connecting">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="conn-text">Connecting…</span>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-ghost btn-sm" id="btn-sync-now" title="Check for changes now">
+          <svg class="i" aria-hidden="true"><use href="#i-sync" /></svg><span>Sync now</span>
+        </button>
+        <button class="icon-btn" id="btn-theme" title="Theme: system">
+          <svg class="i" aria-hidden="true"><use href="#i-contrast" /></svg>
+        </button>
+        <button class="btn btn-outline btn-sm" id="btn-switch">
+          <svg class="i" aria-hidden="true"><use href="#i-power" /></svg><span>Switch Server / Disconnect</span>
+        </button>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar">
+          <div class="card">
+            <div class="card-title">
+              This device
+              <button class="link-btn" id="btn-rename" type="button">
+                <svg class="i" aria-hidden="true"><use href="#i-edit" /></svg>Rename Device
+              </button>
+            </div>
+            <div class="device-self" id="device-self">
+              <div class="device-avatar"><svg class="i" aria-hidden="true"><use href="#i-monitor" /></svg></div>
+              <div class="device-self-body">
+                <div class="device-self-name" id="device-name"></div>
+                <div class="muted small" id="device-meta"></div>
+              </div>
+            </div>
+            <form class="rename-form" id="rename-form" hidden>
+              <input id="in-rename" type="text" maxlength="64" spellcheck="false" aria-label="New device name" />
+              <div class="btn-row">
+                <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-rename-cancel">Cancel</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Sync folder</div>
+            <div class="sync-status" id="sync-status" data-state="idle">
+              <div class="sync-status-icon"><svg class="i" aria-hidden="true"><use href="#i-check-circle" /></svg></div>
+              <div class="sync-status-body">
+                <div class="sync-status-title" id="sync-title">Up to date</div>
+                <div class="muted small" id="sync-sub"></div>
+              </div>
+            </div>
+            <div class="folder-path" id="folder-path" title=""></div>
+            <div class="transfers" id="transfers"></div>
+            <div class="btn-row">
+              <button class="btn btn-outline btn-sm" id="btn-open-folder">
+                <svg class="i" aria-hidden="true"><use href="#i-folder" /></svg><span>Open Folder</span>
+              </button>
+              <button class="btn btn-ghost btn-sm" id="btn-change-folder">Change Folder</button>
+            </div>
+          </div>
+
+          <div class="card card-grow">
+            <div class="card-title">Devices <span class="count" id="devices-count"></span></div>
+            <ul class="device-list" id="device-list"></ul>
+          </div>
+        </aside>
+
+        <main class="main card">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-tab="files" role="tab">
+              <svg class="i" aria-hidden="true"><use href="#i-cloud" /></svg>Cloud Files <span class="count" id="files-count"></span>
+            </button>
+            <button class="tab" data-tab="activity" role="tab">
+              <svg class="i" aria-hidden="true"><use href="#i-activity" /></svg>Activity <span class="badge" id="activity-badge" hidden></span>
+            </button>
+          </div>
+
+          <div class="panel" id="panel-files">
+            <div class="toolbar">
+              <nav class="breadcrumbs" id="breadcrumbs" aria-label="Folder"></nav>
+              <div class="spacer"></div>
+              <label class="search">
+                <svg class="i" aria-hidden="true"><use href="#i-search" /></svg>
+                <input id="in-search" type="search" placeholder="Search all files" spellcheck="false" />
+              </label>
+              <button class="btn btn-primary btn-sm" id="btn-upload">
+                <svg class="i" aria-hidden="true"><use href="#i-upload" /></svg><span>Upload</span>
+              </button>
+            </div>
+            <div class="table-wrap">
+              <table class="file-table">
+                <thead>
+                  <tr>
+                    <th class="col-name sortable" data-sort="name">Name</th>
+                    <th class="col-size sortable" data-sort="size">Size</th>
+                    <th class="col-mod sortable" data-sort="modified">Modified</th>
+                    <th class="col-by sortable" data-sort="by">Updated by</th>
+                    <th class="col-status">Status</th>
+                    <th class="col-actions"><span class="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="file-rows"></tbody>
+              </table>
+              <div class="empty" id="files-empty" hidden></div>
+            </div>
+            <div class="panel-footer muted small">
+              <span id="files-summary"></span>
+              <span class="drop-hint"><svg class="i" aria-hidden="true"><use href="#i-upload" /></svg>Drag files or folders anywhere onto this window to upload</span>
+            </div>
+          </div>
+
+          <div class="panel" id="panel-activity" hidden>
+            <ul class="activity-list" id="activity-list"></ul>
+            <div class="empty" id="activity-empty" hidden>
+              <svg class="i" aria-hidden="true"><use href="#i-activity" /></svg>
+              <div>No activity yet</div>
+              <div class="muted small">Uploads, edits and deletions from every device appear here in real time.</div>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      <div class="drop-overlay" id="drop-overlay" hidden>
+        <div class="drop-box">
+          <svg class="i" aria-hidden="true"><use href="#i-upload" /></svg>
+          <div class="drop-title">Drop to upload</div>
+          <div class="drop-sub" id="drop-target"></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

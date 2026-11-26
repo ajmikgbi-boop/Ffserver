@@ -1,0 +1,23 @@
+{
+  "name": "companysync-server",
+  "version": "1.0.0",
+  "description": "Stateless CompanySync coordination server (Express + Socket.io) that stores every byte in Cloudflare R2.",
+  "main": "src/index.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "check": "node --check src/index.js && node --check src/config.js && node --check src/r2.js && node --check src/workspace.js && node --check src/socket.js && node --check src/validation.js && node --check src/util.js && node --check src/logger.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1178.0",
+    "@aws-sdk/s3-request-presigner": "^3.1178.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  }
+}
